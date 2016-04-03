@@ -12,7 +12,8 @@ var FrameType = {
     "ProbeRequest":true,
     "ProbeResponse":true,
     "Authentication":true,
-    "AssociationResponse":true
+    "AssociationResponse":true,
+    "EAPOLWpaKey":true
 };
     
 var Wpa = {};
@@ -195,6 +196,12 @@ Wpa.PacketFrame = function(data) {
             && result.fc_subtype == 1) {
         result.type = "AssociationResponse";
 
+    } else if (result.fc_version == 0
+            && result.fc_type == 2 // Data Frame
+            && result.fc_subtype == 0) {
+        result.type = "EAPOLWpaKey";
+        result.data = Wpa.eapolWpaKey(frame_data);
+
     } else {
         //throw Error("Unexpected frame, version:", result.fc_version, "type:", result.fc_type, "subtype:", result.fc_subtype);
     }
@@ -203,11 +210,12 @@ Wpa.PacketFrame = function(data) {
 };
 
 Wpa.BeaconFrame = function(data) {
+    var result = {};
     var fixed_params = data.substring(0, 12);
     // TODO: Parse fixed params
 
     data = data.substring(12);
-    this.tags = {};
+    result.tags = {};
     while (data.length > 0) {
         var tag = {};
         var tag_number = Wpa.dataToInt(data, 0, 1);
@@ -216,20 +224,22 @@ Wpa.BeaconFrame = function(data) {
         if (tag_number == 0) {
             // SSID
             tag.ssid = tag_data;
-            this.tags[tag_number] = tag;
+            result.tags[tag_number] = tag;
         }
         data = data.substring(2 + tag_length);
     }
-    return this;
+    return result;
 };
 
 Wpa.AuthenticationFrame = function(data) {
+    var reuslt = {};
+
     var fixed_params = data.substring(0, 6);
 
-    this.auth_algorithm = Wpa.dataToInt(data, 0, 2);
-    this.auth_seq = Wpa.dataToInt(data, 2, 4);
-    this.status_code = Wpa.dataToInt(data, 4, 6);
-    return this;
+    result.auth_algorithm = Wpa.dataToInt(data, 0, 2);
+    result.auth_seq = Wpa.dataToInt(data, 2, 4);
+    result.status_code = Wpa.dataToInt(data, 4, 6);
+    return result;
 };
 
 Wpa.eapolWpaKey = function(data) {
