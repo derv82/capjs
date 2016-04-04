@@ -4,6 +4,8 @@
  * aircrack-ng sample WPA file: http://www.aircrack-ng.org/doku.php?id=wpa_capture
  * Parsing .cap files: http://systemsarchitect.net/2014/03/12/parsing-binary-data-in-php-on-an-example-with-the-pcap-format/
  *
+ * http://www.willhackforsushi.com/papers/80211_Pocket_Reference_Guide.pdf
+ *
  */
 
 /** Types of understood packet frames. */
@@ -17,6 +19,8 @@ var FrameType = {
 };
     
 var Wpa = {};
+
+Wpa.use_big_endian = true;
 
 /** "Constructor" that parses the given data into packets and frames.
  * @param data (string) The data as a string (with charCodes);
@@ -55,7 +59,7 @@ Wpa.parse = function(data) {
  */
 Wpa.dataToInt = function(data, start, end, big_endian, signed) {
     var result = 0;
-    if (big_endian) {
+    if (big_endian == true || Wpa.use_big_endian) {
         for (var i = start; i < end; i++) {
             result = result << 8;
             var x = data.charCodeAt(i);
@@ -77,11 +81,26 @@ Wpa.dataToInt = function(data, start, end, big_endian, signed) {
     }
 };
 
+Wpa.dataToHex = function(data, start, end) {
+    var result = [], hex;
+    for (var i = start; i < end; i++) {
+        hex = data.charCodeAt(i).toString(16);
+        while (hex.length < 2) {
+            hex = "0" + hex;
+        }
+        result.push(hex);
+    }
+    if (Wpa.use_big_endian) {
+        result.reverse();
+    }
+    return result.join("");
+};
+
 /**
  * For debugging purposes only.
  * @return Debug string including the data length and pretty-printed hex values.
  */
-Wpa.bytesToHex = function(data) {
+Wpa.bytesToDebugText = function(data) {
     var debug = "raw data (" + data.length + " bytes)\n";
     for (var i = 0; i < data.length; i++) {
         var b = data.charCodeAt(i).toString(16);
@@ -104,11 +123,18 @@ Wpa.bytesToHex = function(data) {
  * TODO: Check magic_number to see what endian-ness we should be using.
  */
 Wpa.GlobalHeader = function(data) {
+    Wpa.use_big_endian = true;
+    var magic_number = Wpa.dataToInt(data, 0, 4);
+    if (magic_number === 3569595041) {
+        Wpa.use_big_endian = false;
+    } else {
+        Wpa.use_big_endian = true;
+    }
     return {
-      "magic_number":  Wpa.dataToInt(data, 0, 4, true),
+      "magic_number":  magic_number,
       "version_major": Wpa.dataToInt(data, 4, 6),
       "version_minor": Wpa.dataToInt(data, 6, 8),
-      "thiszone":      Wpa.dataToInt(data, 8,12, false, true),
+      "thiszone":      Wpa.dataToInt(data, 8, 12, false, true),
       "sigfigs":       Wpa.dataToInt(data, 12,16),
       "snaplen":       Wpa.dataToInt(data, 16,20),
       "network":       Wpa.dataToInt(data, 20,24),
@@ -152,8 +178,8 @@ Wpa.PacketFrame = function(data) {
 
     result.duration = Wpa.dataToInt(data, 2, 4);
 
-    result.addr_destination = Wpa.dataToInt(data, 4, 10).toString(16);
-    result.addr_source      = Wpa.dataToInt(data, 10, 16).toString(16);
+    result.addr_destination = Wpa.dataToHex(data, 4, 10);
+    result.addr_source      = Wpa.dataToHex(data, 10, 16);
 
     result.bssid = Wpa.dataToInt(data, 16, 22).toString(16);
 
@@ -161,8 +187,21 @@ Wpa.PacketFrame = function(data) {
     result.fragment_number = (frag_seq >>> 0) & 0b1111;
     result.sequence_number = (frag_seq >>> 4) & 0b111111111111;
 
+    var frame_data;
+
+    if (result.fc_version == 0
+            && result.fc_type == 2 // Data Frame
+            && result.fc_subtype == 8) {
+        // QoS Data
+        result.type = "EAPOLWpaKey";
+        result.qos_control = Wpa.dataToInt(data, 24, 26).toString(2);
+        frame_data = data.substring(26);
+    }
+    else {
+        frame_data = data.substring(24);
+    }
+
     // Parse remaining data in frame.
-    var frame_data = data.substring(24);
     if        (result.fc_version == 0
             && result.fc_type == 0
             && result.fc_subtype == 8) {
@@ -198,9 +237,14 @@ Wpa.PacketFrame = function(data) {
 
     } else if (result.fc_version == 0
             && result.fc_type == 2 // Data Frame
-            && result.fc_subtype == 0) {
-        result.type = "EAPOLWpaKey";
-        result.data = Wpa.eapolWpaKey(frame_data);
+            && (result.fc_subtype == 0 || result.fc_subtype == 8)) {
+        if (!result.fcf_protected) {
+            result.type = "EAPOLWpaKey";
+            result.data = Wpa.eapolWpaKey(frame_data);
+        }
+        else {
+            // 802.11 data (tkip?)
+        }
 
     } else {
         //throw Error("Unexpected frame, version:", result.fc_version, "type:", result.fc_type, "subtype:", result.fc_subtype);
@@ -219,6 +263,7 @@ Wpa.BeaconFrame = function(data) {
     while (data.length > 0) {
         var tag = {};
         var tag_number = Wpa.dataToInt(data, 0, 1);
+
         var tag_length = Wpa.dataToInt(data, 1, 2);
         var tag_data = data.substring(2, 2 + tag_length);
         if (tag_number == 0) {
@@ -226,6 +271,7 @@ Wpa.BeaconFrame = function(data) {
             tag.ssid = tag_data;
             result.tags[tag_number] = tag;
         }
+        // TODO: Support other tag numbers.
         data = data.substring(2 + tag_length);
     }
     return result;
@@ -237,11 +283,54 @@ Wpa.AuthenticationFrame = function(data) {
     var fixed_params = data.substring(0, 6);
 
     result.auth_algorithm = Wpa.dataToInt(data, 0, 2);
-    result.auth_seq = Wpa.dataToInt(data, 2, 4);
-    result.status_code = Wpa.dataToInt(data, 4, 6);
+    result.auth_seq       = Wpa.dataToInt(data, 2, 4);
+    result.status_code    = Wpa.dataToInt(data, 4, 6);
     return result;
 };
 
 Wpa.eapolWpaKey = function(data) {
+    //var logical_link_control = data.substring(0, 8);
 
+    data = data.substring(8);
+    var auth_version = Wpa.dataToInt(data, 0, 1);
+    var auth_type = Wpa.dataToInt(data, 1, 2);
+
+    var auth_length = Wpa.dataToInt(data, 2, 4, true, false);
+    data = data.substring(4, 4 + auth_length);
+
+    var key_descriptor = Wpa.dataToInt(data, 0, 1);
+    var key_information = Wpa.dataToInt(data, 1, 3, true, false);
+    var key_length = Wpa.dataToInt(data, 3, 5, true, false);
+    var replay_counter = Wpa.dataToInt(data, 5, 13, true, false);
+    var key_nonce = Wpa.dataToHex(data, 13, 45);
+    var key_iv = Wpa.dataToHex(data, 45, 61);
+    var key_rsc = Wpa.dataToHex(data, 61, 69);
+    var key_id = Wpa.dataToHex(data, 69, 77);
+    var key_mic = Wpa.dataToHex(data, 77, 93);
+
+    var key_data_length = Wpa.dataToInt(data, 93, 95, true, false);
+    var key_data;
+    if (key_data_length > 0) {
+        key_data = Wpa.dataToHex(data, 95, 95 + key_data_length);
+    }
+
+    var result = {
+        "auth_version": auth_version,
+        "auth_type": auth_type,
+        "auth_length": auth_length,
+        "key_descriptor": key_descriptor,
+        "key_information": key_information,
+        "key_length": key_length,
+        "replay_counter": replay_counter,
+        "key_nonce": key_nonce,
+        "key_iv": key_iv,
+        "key_rsc": key_rsc,
+        "key_id": key_id,
+        "key_mic": key_mic,
+    };
+    if (key_data) {
+        result.key_data_length = key_data_length;
+        result.key_data = key_data;
+    }
+    return result;
 };
