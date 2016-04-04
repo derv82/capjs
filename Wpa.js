@@ -38,7 +38,9 @@ Wpa.parse = function(data) {
 
         packet_start += 16;
         var pf = Wpa.PacketFrame(data.substring(packet_start, packet_start + ph.incl_len));
-        frames.push(pf);
+        if (pf.data) {
+            frames.push(pf);
+        }
 
         packet_start += ph.incl_len;
     }
@@ -247,7 +249,7 @@ Wpa.PacketFrame = function(data) {
         }
 
     } else {
-        //throw Error("Unexpected frame, version:", result.fc_version, "type:", result.fc_type, "subtype:", result.fc_subtype);
+        // Skip other frames.
     }
 
     return result;
@@ -299,7 +301,20 @@ Wpa.eapolWpaKey = function(data) {
     data = data.substring(4, 4 + auth_length);
 
     var key_descriptor = Wpa.dataToInt(data, 0, 1);
-    var key_information = Wpa.dataToInt(data, 1, 3, true, false);
+    var key_info = Wpa.dataToInt(data, 1, 3, true, false);
+    var key_information = {
+        "key_descriptor_version":    (key_info >>>  0) & 0b111,
+        "key_type":                  (key_info >>>  3) & 0b1,
+        "key_index":                 (key_info >>>  4) & 0b11,
+        "install":                !!((key_info >>>  6) & 0b1 ),
+        "ack":                    !!((key_info >>>  7) & 0b1 ),
+        "mic":                    !!((key_info >>>  8) & 0b1 ),
+        "secure":                 !!((key_info >>>  9) & 0b1 ),
+        "error":                  !!((key_info >>> 10) & 0b1 ),
+        "request":                !!((key_info >>> 11) & 0b1 ),
+        "encrypted":              !!((key_info >>> 12) & 0b1 ),
+        "smk":                    !!((key_info >>> 13) & 0b1 )
+    };
     var key_length = Wpa.dataToInt(data, 3, 5, true, false);
     var replay_counter = Wpa.dataToInt(data, 5, 13, true, false);
     var key_nonce = Wpa.dataToHex(data, 13, 45);
