@@ -6,7 +6,28 @@
  *
  * http://www.willhackforsushi.com/papers/80211_Pocket_Reference_Guide.pdf
  *
+ * Details on WPA encryption (byte-level) - http://sid.rstack.org/pres/0810_BACon_WPA2_en.pdf
+ *  - Includes details on "caching" repeated calls to "BODY"
+ *
+ * HMAC-SHA1 in JS - https://github.com/Caligatio/jsSHA/tree/v2.0.1
+ *  - Try online: https://caligatio.github.io/jsSHA/
+ *  - Text: "value"
+ *  - Key: "secret"
+ * 
+ * PBKDF2:
+ *  - Apparently it's HMAC-SHA1() * 8192
+ *  - But see https://en.wikipedia.org/wiki/PBKDF2
+ *  - PBKDF2, DK = PBKDF2(PRF,       Password,   Salt, count, dkLen)
+ *  - WPA,    DK = PBKDF2(HMAC−SHA1, passphrase, ssid,  4096, 256)
+ *
+ * Details on 802.11 packet structures - http://www.studioreti.it/slide/802-11-Frame_E_C.pdf
+ *
+ * TODO: 
+ *  - Look at using ArrayBuffer + DataView internal JS structures.
+ *  - Browser compatibility  (ie, chrome, safari)
  */
+
+
 
 /** Types of understood packet frames. */
 var FrameType = {
@@ -21,6 +42,7 @@ var FrameType = {
 var Wpa = {};
 
 Wpa.use_big_endian = true;
+
 
 /** "Constructor" that parses the given data into packets and frames.
  * @param data (string) The data as a string (with charCodes);
@@ -44,9 +66,54 @@ Wpa.parse = function(data) {
 
         packet_start += ph.incl_len;
     }
+
+    /**
+     *  Extract data from handshakes required for cracking.
+     */
+    var extract = function() {
+        // Look for SSID name in previous beacons/auth packets
+
+        // Look for last 3 frames of handshake
+
+        /* Handshake (2 of 4):
+         * mic:true
+         * ack:false
+         * install:false
+         * key_data_length > 0 (data !== undefined)
+         * 
+         * Extract:
+         * - SNonce (from STATION)
+         */
+
+        /* Handshake (3 of 4):
+         * mic:true
+         * ack:true
+         * install:true
+         * 
+         * Extract:
+         * - src_address (STATION)
+         * - dst_address (AP)
+         * - ANonce (from AP)
+         * - replay_counter (for Handshake 4 of 4)
+         */
+
+        /* Handshake (4 of 4):
+         * mic:true
+         * ack:false
+         * install:false
+         * replay_couner: <same as Handshake (3 of 4)>
+         * (And/Or) key_data_length == 0 (data === undefined)
+         * 
+         * Extract:
+         * - MIC
+         * - "EAPOL frame"
+         */
+    };
+
     return {
         "global_header": global_header,
-        "frames": frames
+        "frames": frames,
+        "extract": extract
     };
 };
 
