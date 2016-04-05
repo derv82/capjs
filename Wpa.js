@@ -28,16 +28,7 @@
  */
 
 
-
-/** Types of understood packet frames. */
-var FrameType = {
-    "BeaconResponse":true,
-    "ProbeRequest":true,
-    "ProbeResponse":true,
-    "Authentication":true,
-    "AssociationResponse":true,
-    "EAPOLWpaKey":true
-};
+var CapFile = {};
 
 function Wpa(bytes) {
     this.data_ = bytes;
@@ -184,8 +175,6 @@ Wpa.bytesToDebugText = function(data) {
     return debug;
 };
 
-var CapFile = {};
-
 /**
  * The capture file's "Global Header".
  */
@@ -261,18 +250,40 @@ CapFile.PacketFrame = function(data) {
 
     var frame_data = data.substring(24);
 
+    var frame_types_version = this.frame_control.version.toString() +
+        "." + this.frame_control.type.toString() +
+        "." + this.frame_control.subtype.toString();
+    var frame_type = FrameTypes[frame_types_version];
+    if (frame_type) {
+        this.type = frame_type.type;
+        if (frame_type.builder) {
+           if (frame_types_version == "0.2.0" && this.frame_control.flags.is_protected) {
+               // Data varies if protected flag is set.
+               this.type = "EAPOLWpaKeyData";
+               this.tkip_init_vector = Wpa.dataToInt(frame_data, 0, 8).toString(16);
+               this.tkip_key_index = Wpa.dataToInt(frame_data, 3, 4) & 0b1111;
+               this.dot1x_data = Wpa.dataToHex(frame_data, 8, frame_data.length);
+           } else {
+                this.dot1x_data = new frame_type.builder(frame_data);
+           }
+        }
+        else {
+            this.dot1x_data = null;
+        }
+    }
+    /*
     // Parse remaining data in frame based on frame control type.
     if        (this.frame_control.version == 0
             && this.frame_control.type == 0
             && this.frame_control.subtype == 8) {
         this.type = "BeaconResponse";
-        this.dot1x_data = Wpa.BeaconFrame(frame_data);
+        this.dot1x_data = CapFile.BeaconFrame(frame_data);
 
     } else if (this.frame_control.version == 0
             && this.frame_control.type == 0
             && this.frame_control.subtype == 5) {
         this.type = "ProbeResponse";
-        this.dot1x_data = Wpa.BeaconFrame(frame_data);
+        this.dot1x_data = CapFile.BeaconFrame(frame_data);
 
     } else if (this.frame_control.version == 0
             && this.frame_control.type == 0
@@ -283,7 +294,7 @@ CapFile.PacketFrame = function(data) {
             && this.frame_control.type == 0
             && this.frame_control.subtype == 11) {
         this.type = "Authentication";
-        this.dot1x_data = Wpa.AuthenticationFrame(frame_data);
+        this.dot1x_data = CapFile.AuthenticationFrame(frame_data);
 
     } else if (this.frame_control.version == 0
             && this.frame_control.type == 0
@@ -306,7 +317,7 @@ CapFile.PacketFrame = function(data) {
             }
 
             this.type = "EAPOLWpaKey";
-            this.dot1x_data = Wpa.eapolWpaKey(frame_data);
+            this.dot1x_data = CapFile.EapolWpaKeyFrame(frame_data);
         }
         else {
             // 802.11 data (tkip?)
@@ -315,17 +326,17 @@ CapFile.PacketFrame = function(data) {
     } else {
         // Skip other frames.
     }
+    */
 
     return this;
 };
 
-Wpa.BeaconFrame = function(data) {
-    var result = {};
+CapFile.BeaconFrame = function(data) {
     var fixed_params = data.substring(0, 12);
     // TODO: Parse fixed params
 
     data = data.substring(12);
-    result.tags = {};
+    this.tags = {};
     while (data.length > 0) {
         var tag = {};
         var tag_number = Wpa.dataToInt(data, 0, 1);
@@ -335,26 +346,30 @@ Wpa.BeaconFrame = function(data) {
         if (tag_number == 0) {
             // SSID
             tag.ssid = tag_data;
-            result.tags[tag_number] = tag;
+            this.tags[tag_number] = tag;
         }
         // TODO: Support other tag numbers.
         data = data.substring(2 + tag_length);
     }
-    return result;
+    return this;
 };
 
-Wpa.AuthenticationFrame = function(data) {
-    var reuslt = {};
-
+CapFile.AuthenticationFrame = function(data) {
     var fixed_params = data.substring(0, 6);
 
-    result.auth_algorithm = Wpa.dataToInt(data, 0, 2);
-    result.auth_seq       = Wpa.dataToInt(data, 2, 4);
-    result.status_code    = Wpa.dataToInt(data, 4, 6);
+    this.auth_algorithm = Wpa.dataToInt(data, 0, 2);
+    this.auth_seq       = Wpa.dataToInt(data, 2, 4);
+    this.status_code    = Wpa.dataToInt(data, 4, 6);
+    return this;
+};
+
+CapFile.EapolWpaKeyQosFrame = function(data) {
+    var result = CapFile.EapolWpaKeyFrame(data.substring(2));
+    result.qos_control = Wpa.dataToInt(data, 0, 2).toString(16);
     return result;
 };
 
-Wpa.eapolWpaKey = function(data) {
+CapFile.EapolWpaKeyFrame = function(data) {
     //var logical_link_control = data.substring(0, 8);
 
     data = data.substring(8);
@@ -412,4 +427,39 @@ Wpa.eapolWpaKey = function(data) {
         result.key_data = key_data;
     }
     return result;
+};
+
+
+/** Types of understood packet frames. */
+var FrameTypes = {
+    "0.0.8": {
+        "type": "BeaconResponse",
+        "builder": CapFile.BeaconFrame
+    },
+
+    "0.0.4": {
+        "type": "ProbeRequest",
+    },
+    "0.0.5": {
+        "type": "ProbeResponse",
+        "builder": CapFile.BeaconFrame
+    },
+    "0.0.11": {
+        "type": "Authentication",
+        "builder": CapFile.AuthenticationFrame
+    },
+    "0.0.0": {
+        "type": "AssociationRequest",
+    },
+    "0.0.1": {
+        "type": "AssociationResponse",
+    },
+    "0.2.0": {
+        "type": "EAPOLWpaKey",
+        "builder": CapFile.EapolWpaKeyFrame,
+    },
+    "0.2.8": {
+        type: "EAPOLWpaKey",
+        "builder": CapFile.EapolWpaKeyQosFrame,
+    }
 };
