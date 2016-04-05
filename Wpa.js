@@ -38,83 +38,80 @@ var FrameType = {
     "AssociationResponse":true,
     "EAPOLWpaKey":true
 };
-    
-var Wpa = {};
+
+function Wpa(bytes) {
+    this.data_ = bytes;
+    this.parse();
+}
 
 Wpa.use_big_endian = true;
 
 
-/** "Constructor" that parses the given data into packets and frames.
+/**
+ * "Constructor" that parses the given data into packets and frames.
  * @param data (string) The data as a string (with charCodes);
- * @return     (Object) Containing 'global_header' (see GlobalHeader)
- *                      and 'frames' (array of *Frame objects); 
  */
-Wpa.parse = function(data) {
-    var global_header = Wpa.GlobalHeader(data.substring(0, 24));
+Wpa.prototype.parse = function() {
+    this.global_header = CapFile.GlobalHeader(this.data_);
 
-    var frames = [];
+    this.frames = [];
 
     var packet_start = 24;
-    while (packet_start < data.length) {
-        var ph = Wpa.PacketHeader(data.substring(packet_start, packet_start + 16));
+    while (packet_start < this.data_.length) {
+        var ph = new CapFile.PacketHeader(this.data_.substring(packet_start, packet_start + 16));
 
         packet_start += 16;
-        var pf = Wpa.PacketFrame(data.substring(packet_start, packet_start + ph.incl_len));
-        if (pf.data) {
-            frames.push(pf);
+        var pf = new CapFile.PacketFrame(this.data_.substring(packet_start, packet_start + ph.incl_len));
+        if (pf.dot1x_data) {
+            this.frames.push(pf);
         }
 
         packet_start += ph.incl_len;
     }
+};
 
-    /**
-     *  Extract data from handshakes required for cracking.
+/*
+ * Extract data from handshakes required for cracking.
+ */
+Wpa.prototype.extract_ = function() {
+    var ssid, snonce, anonce, replay_counter, mic, frame_bytes;
+    // Look for SSID name in previous beacons/auth packets
+
+    // Look for last 3 frames of handshake
+
+    /* Handshake (2 of 4):
+     * mic:true
+     * ack:false
+     * install:false
+     * key_data_length > 0 (data !== undefined)
+     * 
+     * Extract:
+     * - SNonce (from STATION)
      */
-    var extract = function() {
-        // Look for SSID name in previous beacons/auth packets
 
-        // Look for last 3 frames of handshake
+    /* Handshake (3 of 4):
+     * mic:true
+     * ack:true
+     * install:true
+     * 
+     * Extract:
+     * - src_address (STATION)
+     * - dst_address (AP)
+     * - ANonce (from AP)
+     * - replay_counter (for Handshake 4 of 4)
+     */
 
-        /* Handshake (2 of 4):
-         * mic:true
-         * ack:false
-         * install:false
-         * key_data_length > 0 (data !== undefined)
-         * 
-         * Extract:
-         * - SNonce (from STATION)
-         */
-
-        /* Handshake (3 of 4):
-         * mic:true
-         * ack:true
-         * install:true
-         * 
-         * Extract:
-         * - src_address (STATION)
-         * - dst_address (AP)
-         * - ANonce (from AP)
-         * - replay_counter (for Handshake 4 of 4)
-         */
-
-        /* Handshake (4 of 4):
-         * mic:true
-         * ack:false
-         * install:false
-         * replay_couner: <same as Handshake (3 of 4)>
-         * (And/Or) key_data_length == 0 (data === undefined)
-         * 
-         * Extract:
-         * - MIC
-         * - "EAPOL frame"
-         */
-    };
-
-    return {
-        "global_header": global_header,
-        "frames": frames,
-        "extract": extract
-    };
+    /* Handshake (4 of 4):
+     * mic:true
+     * ack:false
+     * install:false
+     * replay_couner: <same as Handshake (3 of 4)>
+     * (And/Or) key_data_length == 0 (data === undefined)
+     * 
+     * Extract:
+     * - MIC
+     * - "EAPOL frame"
+     */
 };
 
 /**
@@ -122,7 +119,7 @@ Wpa.parse = function(data) {
  * @param data       (string) The data as a string (with charCodes).
  * @param start      (int)    The starting index of the subsection.
  * @param end        (int)    The ending index of the subsection.
- * @param big_endian (bool)   If data is in big-endian format, default: false
+ * @param big_endian (bool)   If data is in big-endian format, default: Wpa.use_big_endian
  * @param signed     (bool)   If int should be signed, default: false.
  * @return           (int)    Integer-representation of the subsection of data.
  */
@@ -187,129 +184,129 @@ Wpa.bytesToDebugText = function(data) {
     return debug;
 };
 
+var CapFile = {};
+
 /**
  * The capture file's "Global Header".
- * TODO: Check magic_number to see what endian-ness we should be using.
  */
-Wpa.GlobalHeader = function(data) {
+CapFile.GlobalHeader = function(data) {
+    this.data_ = data.substring(0, 24);
     Wpa.use_big_endian = true;
-    var magic_number = Wpa.dataToInt(data, 0, 4);
-    if (magic_number === 3569595041) {
+    this.magic_number = Wpa.dataToInt(this.data_, 0, 4);
+    if (this.magic_number === 3569595041) {
         Wpa.use_big_endian = false;
     } else {
         Wpa.use_big_endian = true;
     }
-    return {
-      "magic_number":  magic_number,
-      "version_major": Wpa.dataToInt(data, 4, 6),
-      "version_minor": Wpa.dataToInt(data, 6, 8),
-      "thiszone":      Wpa.dataToInt(data, 8, 12, false, true),
-      "sigfigs":       Wpa.dataToInt(data, 12,16),
-      "snaplen":       Wpa.dataToInt(data, 16,20),
-      "network":       Wpa.dataToInt(data, 20,24),
-    };
+
+    this.version_major = Wpa.dataToInt(this.data_, 4, 6);
+    this.version_minor = Wpa.dataToInt(this.data_, 6, 8);
+    this.thiszone = Wpa.dataToInt(this.data_, 8, 12, false, true);
+    this.sigfigs = Wpa.dataToInt(this.data_, 12,16);
+    this.snaplen = Wpa.dataToInt(this.data_, 16,20);
+    this.network = Wpa.dataToInt(this.data_, 20,24);
+
+    this.data_ = Wpa.dataToHex(this.data_, 0, this.data_.length);
+
+    return this;
 };
 
 /**
  * Header for a single packet.
  * Contains vital "incl_len" which is the length of the packet data.
  */
-Wpa.PacketHeader = function(data) {
-    return {
-      "ts_sec":   Wpa.dataToInt(data, 0, 4),
-      "ts_usec":  Wpa.dataToInt(data, 4, 8),
-      "incl_len": Wpa.dataToInt(data, 8,12),
-      "orig_len": Wpa.dataToInt(data,12,16),
-    };
+CapFile.PacketHeader = function(data) {
+    this.ts_sec = Wpa.dataToInt(data, 0, 4);
+    this.ts_usec = Wpa.dataToInt(data, 4, 8);
+    this.incl_len = Wpa.dataToInt(data, 8,12);
+    this.orig_len = Wpa.dataToInt(data,12,16);
+    return this;
 };
 
 /**
  * Packet frame information.
  * If frame is identified, will contain a "type" (string) representing the frame.
  */
-Wpa.PacketFrame = function(data) {
+CapFile.PacketFrame = function(data) {
     // Frame Control
-    var result = {};
     var fc = Wpa.dataToInt(data, 0, 1);
-    result.fc_version = (fc >>> 0) & 0b11;
-    result.fc_type    = (fc >>> 2) & 0b11;
-    result.fc_subtype = (fc >>> 4);
+
+    this.frame_control = {};
+    this.frame_control.version = (fc >>> 0) & 0b11;
+    this.frame_control.type    = (fc >>> 2) & 0b11;
+    this.frame_control.subtype = (fc >>> 4);
+
     // FrameControl Flags
     var fcf = Wpa.dataToInt(data, 1, 2);
-    result.fcf_toDS          = !!(fcf >>> 0);
-    result.fcf_fromDS        = !!(fcf >>> 1);
-    result.fcf_moreFragments = !!(fcf >>> 2);
-    result.fcf_retry         = !!(fcf >>> 3);
-    result.fcf_pwrMgt        = !!(fcf >>> 4);
-    result.fcf_moreData      = !!(fcf >>> 5);
-    result.fcf_protected     = !!(fcf >>> 6);
-    result.fcf_order         = !!(fcf >>> 7);
+    this.frame_control.flags = {};
+    this.frame_control.flags.toDS          = !!(fcf >>> 0 & 0b1);
+    this.frame_control.flags.fromDS        = !!(fcf >>> 1 & 0b1);
+    this.frame_control.flags.moreFragments = !!(fcf >>> 2 & 0b1);
+    this.frame_control.flags.retry         = !!(fcf >>> 3 & 0b1);
+    this.frame_control.flags.pwrMgt        = !!(fcf >>> 4 & 0b1);
+    this.frame_control.flags.moreData      = !!(fcf >>> 5 & 0b1);
+    this.frame_control.flags.is_protected  = !!(fcf >>> 6 & 0b1);
+    this.frame_control.flags.order         = !!(fcf >>> 7 & 0b1);
 
-    result.duration = Wpa.dataToInt(data, 2, 4);
+    this.duration = Wpa.dataToInt(data, 2, 4);
 
-    result.addr_destination = Wpa.dataToHex(data, 4, 10);
-    result.addr_source      = Wpa.dataToHex(data, 10, 16);
+    this.addr_destination = Wpa.dataToHex(data, 4, 10);
+    this.addr_source      = Wpa.dataToHex(data, 10, 16);
 
-    result.bssid = Wpa.dataToInt(data, 16, 22).toString(16);
+    this.bssid = Wpa.dataToHex(data, 16, 22);
 
     var frag_seq = Wpa.dataToInt(data, 22, 24);
-    result.fragment_number = (frag_seq >>> 0) & 0b1111;
-    result.sequence_number = (frag_seq >>> 4) & 0b111111111111;
+    this.fragment_number = (frag_seq >>> 0) & 0b1111;
+    this.sequence_number = (frag_seq >>> 4) & 0b111111111111;
 
-    var frame_data;
+    var frame_data = data.substring(24);
 
-    if (result.fc_version == 0
-            && result.fc_type == 2 // Data Frame
-            && result.fc_subtype == 8) {
-        // QoS Data
-        result.type = "EAPOLWpaKey";
-        result.qos_control = Wpa.dataToInt(data, 24, 26).toString(2);
-        frame_data = data.substring(26);
-    }
-    else {
-        frame_data = data.substring(24);
-    }
+    // Parse remaining data in frame based on frame control type.
+    if        (this.frame_control.version == 0
+            && this.frame_control.type == 0
+            && this.frame_control.subtype == 8) {
+        this.type = "BeaconResponse";
+        this.dot1x_data = Wpa.BeaconFrame(frame_data);
 
-    // Parse remaining data in frame.
-    if        (result.fc_version == 0
-            && result.fc_type == 0
-            && result.fc_subtype == 8) {
-        result.type = "BeaconResponse";
-        result.data = Wpa.BeaconFrame(frame_data);
+    } else if (this.frame_control.version == 0
+            && this.frame_control.type == 0
+            && this.frame_control.subtype == 5) {
+        this.type = "ProbeResponse";
+        this.dot1x_data = Wpa.BeaconFrame(frame_data);
 
-    } else if (result.fc_version == 0
-            && result.fc_type == 0
-            && result.fc_subtype == 5) {
-        result.type = "ProbeResponse";
-        result.data = Wpa.BeaconFrame(frame_data);
+    } else if (this.frame_control.version == 0
+            && this.frame_control.type == 0
+            && this.frame_control.subtype == 4) {
+        this.type = "ProbeRequest";
 
-    } else if (result.fc_version == 0
-            && result.fc_type == 0
-            && result.fc_subtype == 4) {
-        result.type = "ProbeRequest";
+    } else if (this.frame_control.version == 0
+            && this.frame_control.type == 0
+            && this.frame_control.subtype == 11) {
+        this.type = "Authentication";
+        this.dot1x_data = Wpa.AuthenticationFrame(frame_data);
 
-    } else if (result.fc_version == 0
-            && result.fc_type == 0
-            && result.fc_subtype == 11) {
-        result.type = "Authentication";
-        result.data = Wpa.AuthenticationFrame(frame_data);
+    } else if (this.frame_control.version == 0
+            && this.frame_control.type == 0
+            && this.frame_control.subtype == 0) {
+        this.type = "AssociationRequest";
 
-    } else if (result.fc_version == 0
-            && result.fc_type == 0
-            && result.fc_subtype == 0) {
-        result.type = "AssociationRequest";
+    } else if (this.frame_control.version == 0
+            && this.frame_control.type == 0
+            && this.frame_control.subtype == 1) {
+        this.type = "AssociationResponse";
 
-    } else if (result.fc_version == 0
-            && result.fc_type == 0
-            && result.fc_subtype == 1) {
-        result.type = "AssociationResponse";
+    } else if (this.frame_control.version == 0
+            && this.frame_control.type == 2 // Data Frame
+            && (this.frame_control.subtype == 0 || this.frame_control.subtype == 8)) {
+        if (!this.frame_control.flags.is_protected) {
 
-    } else if (result.fc_version == 0
-            && result.fc_type == 2 // Data Frame
-            && (result.fc_subtype == 0 || result.fc_subtype == 8)) {
-        if (!result.fcf_protected) {
-            result.type = "EAPOLWpaKey";
-            result.data = Wpa.eapolWpaKey(frame_data);
+            if (this.frame_control.subtype == 8) {
+                this.qos_control = Wpa.dataToInt(frame_data, 0, 2).toString(2);
+                frame_data = data.substring(2);
+            }
+
+            this.type = "EAPOLWpaKey";
+            this.dot1x_data = Wpa.eapolWpaKey(frame_data);
         }
         else {
             // 802.11 data (tkip?)
@@ -319,7 +316,7 @@ Wpa.PacketFrame = function(data) {
         // Skip other frames.
     }
 
-    return result;
+    return this;
 };
 
 Wpa.BeaconFrame = function(data) {
