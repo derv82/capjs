@@ -37,7 +37,6 @@ function Wpa(bytes) {
 
 Wpa.use_big_endian = true;
 
-
 /**
  * "Constructor" that parses the given data into packets and frames.
  * @param data (string) The data as a string (with charCodes);
