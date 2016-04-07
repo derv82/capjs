@@ -7,3 +7,4 @@ document.querySelector('input').addEventListener('change', function() {
     }
     reader.readAsBinaryString(this.files[0]);
 }, false);
+
