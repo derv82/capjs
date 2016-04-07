@@ -67,7 +67,7 @@ function CapFile(bytes, debug) {
 CapFile.useBigEndian = true;
 
 // Constants
-CapFile.MAGIC_NUMBER_LITTLE_ENDIAN = "a1b2c3d4";
+CapFile.MAGIC_NUMBER = 2712847316;
 CapFile.SUPPORTED_PCAP_VERSION = "2.4";
 CapFile.WLAN_HEADER_TYPE = 105;
 CapFile.GLOBAL_HEADER_LENGTH = 24;
@@ -165,6 +165,8 @@ CapFile.prototype.getHex = function(startIndex, endIndex, byteSpacer, colSpacer,
     if (byteSpacer) {
         byteList.push("");
     }
+
+    // Presume Big-endian for all hex value operations.
     for (i = startIndex; i < endIndex; i++) {
         hex = this.bytes_.charCodeAt(i).toString(16);
         while (hex.length < 2) {
@@ -178,9 +180,7 @@ CapFile.prototype.getHex = function(startIndex, endIndex, byteSpacer, colSpacer,
         }
         byteList.push(hex);
     }
-    if (CapFile.useBigEndian) {
-        byteList.reverse();
-    }
+
     return byteList.join(byteSpacer || "");
 };
 
@@ -223,20 +223,23 @@ CapFile.prototype.getBytes = function(startIndex, endIndex) {
  */
 CapFile.GlobalHeader = function() {
     // Presume big endian.
-    CapFile.useBigEndian = true;
+    CapFile.useBigEndian = false;
 
     // Set global endianess based on the magic number.
-    var magic_number = this.getHex(0, 4);
-    if (magic_number === CapFile.MAGIC_NUMBER_LITTLE_ENDIAN) {
+    var magic_number = this.getInt(0, 4);
+    if (magic_number === CapFile.MAGIC_NUMBER) {
         if (CapFile.debug) {
             console.log("[CapFile.js, Debug] Using Little-Endian byte-encoding due to magic number: " + magic_number);
         }
-        CapFile.useBigEndian = false;
     } else {
         if (CapFile.debug) {
             console.log("[CapFile.js, Debug] Using Big-Endian byte-encoding due to magic number: " + magic_number);
         }
         CapFile.useBigEndian = true;
+        magic_number = this.getInt(0, 4);
+        if (magic_number !== CapFile.MAGIC_NUMBER) {
+            throw Error("Can't read magic number! Got <" + magic_number + ">, but expecting <" + CapFile.MAGIC_NUMBER + ">");
+        }
     }
 
     var headers = {
@@ -245,7 +248,7 @@ CapFile.GlobalHeader = function() {
         version: this.getInt(4, 6).toString(10) + "." + this.getInt(6, 8).toString(10),
 
         // Difference between capfile timestamps and GMT (in seconds)
-        gmtOffset: this.getInt(8, 12, false, true),
+        gmtOffset: this.getInt(8, 12, undefined, true),
 
         // The accuracy of the capfile timestamps
         sigFigs: this.getInt(12, 16),
