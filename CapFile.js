@@ -14,7 +14,7 @@ function CapFile(bytes, debug) {
     this.bytes_ = bytes;
     this.byteOffset_ = 0;
     this.bytesTotal = this.bytes_.length;
-    this.bytesHex = this.getHex(0, this.bytesTotal, " ");
+    //this.bytesHex = this.getHex(0, this.bytesTotal, " ");
 
     this.parse();
 
@@ -26,7 +26,7 @@ function CapFile(bytes, debug) {
 CapFile.useBigEndian = true;
 
 // Constants
-CapFile.MAGIC_NUMBER_LITTLE_ENDIAN = 3569595041;
+CapFile.MAGIC_NUMBER_LITTLE_ENDIAN = "a1b2c3d4";
 CapFile.SUPPORTED_PCAP_VERSION = "2.4";
 CapFile.WLAN_HEADER_TYPE = 105;
 CapFile.GLOBAL_HEADER_LENGTH = 24;
@@ -38,7 +38,6 @@ CapFile.PACKET_HEADER_LENGTH = 16;
 CapFile.prototype.parse = function() {
     // First chunk of bytes is global header.
     this.globalHeader = CapFile.GlobalHeader.call(this);
-    console.log(this.globalHeader.rawBytes_);
 
     // Ensure we can parse this data.
     if (this.globalHeader.version !== CapFile.SUPPORTED_PCAP_VERSION) {
@@ -96,7 +95,7 @@ CapFile.prototype.getHex = function(startIndex, endIndex, byteSpacer, colSpacer,
     startIndex += this.byteOffset_;
     endIndex += this.byteOffset_;
 
-    var byteList = [], hex, i;
+    var byteList = [], hex, i, counter = 0;
     if (byteSpacer) {
         byteList.push("");
     }
@@ -105,9 +104,10 @@ CapFile.prototype.getHex = function(startIndex, endIndex, byteSpacer, colSpacer,
         while (hex.length < 2) {
             hex = "0" + hex;
         }
-        if (rowSpacer && (i + 1) % 16 == 0) {
+        counter++;
+        if (rowSpacer && counter % 16 == 0) {
             hex += rowSpacer;
-        } else if (colSpacer && (i + 1) % 8 == 0) {
+        } else if (colSpacer && counter % 8 == 0) {
             hex += colSpacer;
         }
         byteList.push(hex);
@@ -141,7 +141,7 @@ CapFile.GlobalHeader = function() {
     CapFile.useBigEndian = true;
 
     // Set global endianess based on the magic number.
-    var magic_number = this.getInt(0, 4);
+    var magic_number = this.getHex(0, 4);
     if (magic_number === CapFile.MAGIC_NUMBER_LITTLE_ENDIAN) {
         if (CapFile.debug) {
             console.log("[CapFile.js, Debug] Using Little-Endian byte-encoding due to magic number: " + magic_number);
@@ -171,7 +171,7 @@ CapFile.GlobalHeader = function() {
 
         // Link-layer header type. See http://www.tcpdump.org/linktypes.html
         // e.g. LINKTYPE_IEEE802_11 = 105 (for Wireless LAN)
-        headerType: this.getInt(20, 24),
+        headerType: this.getInt(20, 24)
 
     };
 
@@ -191,7 +191,7 @@ CapFile.WlanFrame = function() {
         timestampSec: this.getInt(0, 4),
         timestampMicrosec: this.getInt(4, 8),
         length: this.getInt(8, 12),
-        originalLength: this.getInt(12, 16),
+        originalLength: this.getInt(12, 16)
     };
 
     // Convert timestamps to date.
@@ -212,7 +212,7 @@ CapFile.WlanFrame = function() {
     frame.frameControl = {
         version:  (frameControlBits >>> 0) & 0b11,
         type:     (frameControlBits >>> 2) & 0b11,
-        subtype:  (frameControlBits >>> 4) & 0b1111,
+        subtype:  (frameControlBits >>> 4) & 0b1111
     };
 
     var frameControlFlags = this.getInt(1, 2);
@@ -224,7 +224,7 @@ CapFile.WlanFrame = function() {
         powerMgt:      !!(frameControlFlags >>> 4 & 0b1),
         moreData:      !!(frameControlFlags >>> 5 & 0b1),
         is_protected:  !!(frameControlFlags >>> 6 & 0b1),
-        order:         !!(frameControlFlags >>> 7 & 0b1),
+        order:         !!(frameControlFlags >>> 7 & 0b1)
     };
 
     frame.duration = this.getInt(2, 4);
@@ -232,25 +232,27 @@ CapFile.WlanFrame = function() {
     frame.addr1 = this.getHex(4, 10);
 
     // From here on, the fields may vary depending on the Frame Type (MANAGEMENT, CONTROL, DATA).
-    if (frame.frameControl.type === CapFile.WlanFrame.Types.MANAGEMENT) {
-        // Non-802.11 parameters are easy.
+    if (frame.frameControl.type === CapFile.WlanFrame.Types.CONTROL) {
+        // No other relevant data to parse.
+    } else {
+        // Capture similarities between Management and Data frames.
         frame.addr2 = this.getHex(10, 16);
         frame.addr3 = this.getHex(16, 22);
         var frag_seq = this.getInt(22, 24);
         frame.fragment_number = (frag_seq >>> 0) & 0b1111;
         frame.sequence_number = (frag_seq >>> 4) & 0b111111111111;
 
-        // Skip to 802.1x frame
+        // Skip to just past the sequence number.
         this.byteOffset_ += 24;
 
-        // Parse frame in context of a Control Frame.
-        CapFile.WlanFrame.Control.call(this, frame, endOfPacketOffset);
-    }
-    else if (frame.frameControl.type === CapFile.WlanFrame.Types.CONTROL) {
-        // No other data to parse.
-    }
-    else if (frame.frameControl.type === CapFile.WlanFrame.Types.DATA) {
-        // Parse data depending on subtype.
+        if (frame.frameControl.type === CapFile.WlanFrame.Types.MANAGEMENT) {
+            // Parse frame in context of a Management Frame.
+            CapFile.WlanFrame.Management.call(this, frame, endOfPacketOffset);
+        }
+        else if (frame.frameControl.type === CapFile.WlanFrame.Types.DATA) {
+            // Parse frame in context of a Data frame.
+            CapFile.WlanFrame.Data.call(this, frame, endOfPacketOffset);
+        }
     }
 
     // Shift to end of frame
@@ -265,7 +267,7 @@ CapFile.WlanFrame.Types = {
     DATA: 2
 };
 
-CapFile.WlanFrame.Control = function(frame, endOfPacketOffset) {
+CapFile.WlanFrame.Management = function(frame, endOfPacketOffset) {
     // TODO: Parse fixed and (if they exist) tagged parameters.
     //       Fixed params length varies depending on subtype.
     //       Beacon:12, Deauth:2, ProbeResponse:12, AssociationResponse:6,
@@ -299,7 +301,6 @@ CapFile.WlanFrame.Control = function(frame, endOfPacketOffset) {
         fixedParamLength = 9;
     }
 
-    console.log("Fixed param length: " + fixedParamLength);
     if (!fixedParamLength) {
         frame.name = "Unknown";
         // Unable to parse tagged parameters without knowing fixed parameter length.
@@ -336,5 +337,63 @@ CapFile.WlanFrame.Control = function(frame, endOfPacketOffset) {
         }
         this.byteOffset_ += tagLength + 2;
     }
+};
+
+CapFile.WlanFrame.Data = function(frame, endOfPacketOffset) {
+    if (frame.frameControl.flags.toDS && frame.frameControl.flags.fromDS) {
+        // toDS and fromDS are set, expect addr4
+        frame.addr4 = this.getHex(0, 6);
+        this.byteOffset_ += 6;
+    }
+    if ((frame.frameControl.subtype & 0b1000) === 8) {
+        // QoS flag is set. Expect QoS control field.
+        this.qosControl = this.getHex(0, 2);
+        this.byteOffset_ += 2;
+    }
+    if (frame.frameControl.flags.order) {
+        // Expect HT Control field.
+        this.byteOffset_ += 4;
+    }
+
+    // Skip Logical-Link Control bytes
+    this.byteOffset_ += 8;
+
+    // Parse Data frame body -- expect 802.1x auth packet.
+    var authVersion = this.getInt(0, 1);
+    var authType = this.getInt(1, 2);
+    frame.auth = {
+        version:            authVersion, // 1=802.1X-2001
+        type:               authType, // 3=Key
+        authLength:         this.getInt(2, 4, true, false),
+        keyDescriptorType:  this.getInt(4, 5), // 2=EAPOL RSN Key
+        keyInfo:            this.getInt(5, 7, true, false),
+        keyLength:          this.getInt(7, 9, true, false),
+        replayCounter:      this.getInt(9, 17, true, false),
+        keyNonce:           this.getHex(17, 49),
+        keyIV:              this.getHex(49, 65),
+        keyRSC:             this.getHex(65, 73),
+        keyID:              this.getHex(73, 81),
+        keyMIC:             this.getHex(81, 97),
+        keyDataLength:      this.getInt(97, 99, true, false)
+    }
+    frame.auth.keyInformation = {
+        keyDescriptorVersion:      (frame.auth.keyInfo >>>  0) & 0b111, // 2=AES Cipher, HMAC-SHA1 MIC
+        keyType:                   (frame.auth.keyInfo >>>  3) & 0b1,   // 1=pairwise key
+        keyIndex:                  (frame.auth.keyInfo >>>  4) & 0b11,
+        install:                !!((frame.auth.keyInfo >>>  6) & 0b1 ),
+        ack:                    !!((frame.auth.keyInfo >>>  7) & 0b1 ),
+        mic:                    !!((frame.auth.keyInfo >>>  8) & 0b1 ),
+        secure:                 !!((frame.auth.keyInfo >>>  9) & 0b1 ),
+        error:                  !!((frame.auth.keyInfo >>> 10) & 0b1 ),
+        request:                !!((frame.auth.keyInfo >>> 11) & 0b1 ),
+        encrypted:              !!((frame.auth.keyInfo >>> 12) & 0b1 )
+    };
+    this.byteOffset_ += 99;
+
+    if (frame.auth.keyDataLength > 0) {
+        frame.auth.keyData = this.getHex(99, 99 + frame.auth.keyDataLength);
+        this.byteOffset_ += frame.auth.keyDataLength;
+    }
+
 };
 
