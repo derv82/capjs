@@ -373,6 +373,26 @@ CapFile.WlanFrame = function() {
         frame.fragmentNumber = (fragSeq >>> 0) & 0b1111;
         frame.sequenceNumber = (fragSeq >>> 4) & 0b111111111111;
 
+        var toDS = frame.frameControl.flags.toDS,
+          fromDS = frame.frameControl.flags.fromDS;
+        if (toDS && !fromDS) {
+            frame._bssid = frame.addr1;
+            frame._station = frame.addr2;
+        }
+        else if (!toDS && fromDS) {
+            frame._bssid = frame.addr2;
+            frame._station = frame.addr1;
+        }
+        else if (!toDS && !fromDS) {
+            frame._bssid = frame.addr3;
+            frame._station = undefined;
+        }
+        else if (toDS && fromDS) {
+            // No idea
+            frame._bssid = undefined;
+            frame._station = undefined;
+        }
+
         // Skip to just past the sequence number.
         this.byteOffset_ += 24;
 
