@@ -41,7 +41,7 @@
 
 /**
  * Parse the given bytes of a Packet Capture (PCAP) file.
- * Loads result into boejct this.globalHeader (always) and list this.packetFrames (for known frame types).
+ * Loads result into this.globalHeader (always) and list this.packetFrames (for known frame types).
  *
  * @param bytes - (string? bytes?) Raw bytes from a .cap Pcap file.
  * @param debug - (boolean) Flag to dump debug information to the console (default: false)
@@ -419,7 +419,7 @@ CapFile.WlanFrame.Types = {
 };
 
 /**
- * Adds any additional information about this Management packet.
+ * Adds any additional information about this Management packet to the given frame.
  * Only a subset of Management frames are supported.
  *
  * Focus is on getting SSID from the Management frames' "tagged parameters".
@@ -507,7 +507,7 @@ CapFile.WlanFrame.Management = function(frame, endOfPacketOffset) {
 };
 
 /**
- * Adds any additional information about this Data frame.
+ * Adds any additional information about this Data frame to the given frame.
  * Only a small subset of Data frames are supported.
  *
  * Focus is on getting EAPOL (WPA handshake-related) information.
@@ -547,6 +547,8 @@ CapFile.WlanFrame.Data = function(frame, endOfPacketOffset) {
 
     // Skip Logical-Link Control bytes
     this.byteOffset_ += 8;
+
+    frame.bytes = this.getHex(0, endOfPacketOffset - this.byteOffset_);
 
     // Parse Data frame body -- expect 802.1x auth packet.
     var authVersion = this.getInt(0, 1);
@@ -588,7 +590,7 @@ CapFile.WlanFrame.Data = function(frame, endOfPacketOffset) {
 };
 
 /**
- * TODO: Identify 4-way handshake(s), extract information required for calculating PMK.
+ * Identify 4-way handshake(s), extract information required for calculating PMK.
  */
 CapFile.prototype.extractPmkFields = function(givenSsid) {
     // Look for SSID name in previous beacons/auth packets
@@ -634,7 +636,7 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
         }
 
         var fc, mic, ack, install, dataLength;
-        var hsSrcAddress, hsDstAddress, snonce, anonce, hsReplayCounter, hsMic;
+        var hsSrcAddress, hsDstAddress, snonce, anonce, hsKeyLength, hsReplayCounter, hsMic, hsKeyDescriptorVersion;
         for (i = 0; i < this.packetFrames.length; i++) {
             frame = this.packetFrames[i];
 
@@ -653,6 +655,7 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
                 continue;
             }
 
+            // Store fields used in all handshakes.
             mic = frame.auth.keyInfoFlags.mic;
             ack = frame.auth.keyInfoFlags.ack;
             install = frame.auth.keyInfoFlags.install;
@@ -669,7 +672,8 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
              */
             if (mic && !ack && !install && dataLength > 0) {
                 // Reset variables from Handshakes #3 and #4
-                hsSrcAddress = hsDstAddress = anonce = hsReplayCounter = hsMic = undefined;
+                hsSrcAddress = hsDstAddress = anonce = hsKeyLength = hsReplayCounter = hsMic = hsKeyDescriptorVersion = undefined;
+
                 // Extract SNonce
                 snonce = frame.auth.keyNonce;
                 if (CapFile.debug) {
@@ -694,15 +698,21 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
                     // Require Handshake #2
                     continue;
                 }
+
                 // Reset variables from Handshake #4
-                hsMic = undefined;
+                hsMic = hsKeyDescriptorVersion = undefined;
+
                 // Extract variables
                 hsSrcAddress = frame._station;
                 hsDstAddress = frame._bssid;
                 anonce = frame.auth.keyNonce;
                 hsReplayCounter = frame.auth.replayCounter;
+                hsKeyLength = frame.auth.keyLength;
                 if (CapFile.debug) {
-                    console.log("[CapFile.js] Handshake (3 of 4): src", hsSrcAddress, "dst", hsDstAddress, "ANonce", anonce, "counter", hsReplayCounter);
+                    console.log("[CapFile.js] Handshake (3 of 4): src", hsSrcAddress,
+                            "dst", hsDstAddress,
+                            "ANonce", anonce,
+                            "counter", hsReplayCounter);
                 }
                 continue;
             }
@@ -718,15 +728,25 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
              * - MIC
              * - "EAPOL frame"
              */
-            if (mic && !ack && !install && hsReplayCounter && hsReplayCounter === frame.auth.replayCounter && dataLength === 0) {
+            if (mic && !ack && !install
+                    && hsReplayCounter && hsReplayCounter === frame.auth.replayCounter
+                    && dataLength === 0) {
                 if (!anonce) {
                     // Require handshake #3.
                     continue;
                 }
+
                 hsMic = frame.auth.keyMIC;
-                if (CapFile.debug) {
-                    console.log("[CapFile.js] Handshake (4 of 4): MIC", hsMic);
+                hsKeyDescriptorVersion = frame.auth.keyInfoFlags.keyDescriptorVersion;
+                var eapolFrameBytes = frame.bytes;
+                eapolFrameBytes = eapolFrameBytes.substring(0, eapolFrameBytes.length - 36);
+                for (var j = 0; j < 36; j++) {
+                    eapolFrameBytes += "0";
                 }
+                if (CapFile.debug) {
+                    console.log("[CapFile.js] Handshake (4 of 4): MIC", hsMic, "eapolFrameBytes", eapolFrameBytes);
+                }
+
                 handshakes.push({
                     ssid: ssid,
                     bssid: bssid,
@@ -734,14 +754,14 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
                     anonce: anonce,
                     srcAddress: hsSrcAddress,
                     dstAddress: hsDstAddress,
-                    replayCounter: hsReplayCounter,
-                    mic: hsMic
+                    keyLength: hsKeyLength,
+                    mic: hsMic,
+                    eapolFrameBytes: eapolFrameBytes,
+                    keyDescriptorVersion: hsKeyDescriptorVersion
                 });
                 continue;
             }
         }
-
-
     }
 
     if (bssids.length === 0) {
@@ -752,6 +772,7 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
         throw Error("No handshakes found");
     }
 
+    // TODO: Return all handshakes? Or just the first one?
     if (CapFile.debug) {
         console.log("[CapFile.js] Captured", handshakes.length, "4-way handshakes:", handshakes);
         console.log("[CapFile.js] Using first 4-way handshake captured:", handshakes[0]);
