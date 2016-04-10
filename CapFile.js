@@ -590,44 +590,173 @@ CapFile.WlanFrame.Data = function(frame, endOfPacketOffset) {
 /**
  * TODO: Identify 4-way handshake(s), extract information required for calculating PMK.
  */
-CapFile.prototype.extractPmkFields = function() {
-    var ssid, snonce, anonce, replay_counter, mic, frame_bytes;
+CapFile.prototype.extractPmkFields = function(givenSsid) {
     // Look for SSID name in previous beacons/auth packets
 
-    // Look for last 3 frames of handshake
+    var bssid_to_ssid = {};
+    var i, frame;
+    for (i = 0; i < this.packetFrames.length; i++) {
+        frame = this.packetFrames[i];
+        if (!frame.hasOwnProperty("taggedParameters")
+         || !frame.hasOwnProperty("_bssid")) {
+            continue;
+        }
+        var tags = frame.taggedParameters;
+        if (!tags.hasOwnProperty("0")) {
+            continue;
+        }
+        var tag = tags["0"];
+        if (!tag.hasOwnProperty("name") || tag.name !== "SSID") {
+            continue;
+        }
+        if (!givenSsid || tag.data === givenSsid) {
+            bssid_to_ssid[frame._bssid] = tag.data;
+        }
+        else if (CapFile.debug) {
+            console.log("Ignoring discovered SSID <", tag.data, "> because it does not match given SSID <", givenSSID, ">");
+        }
+    }
 
-    /* Handshake (2 of 4):
-     * mic:true
-     * ack:false
-     * install:false
-     * keyDataLength > 0)
-     * 
-     * Extract:
-     * - keynonce (SNonce , the nonce from STATION)
-     */
+    var handshakes = [];
 
-    /* Handshake (3 of 4):
-     * mic:true
-     * ack:true
-     * install:true
-     * 
-     * Extract:
-     * - src_address (STATION)
-     * - dst_address (AP)
-     * - ANonce (from AP)
-     * - replay_counter (for Handshake 4 of 4)
-     */
+    // Iterate over all known BSSIDs
+    var bssids = [], ssid;
+    for (var bssid in bssid_to_ssid) {
+        if (!bssid_to_ssid.hasOwnProperty(bssid)) {
+            continue;
+        }
+        bssids.push(bssid);
+        ssid = bssid_to_ssid[bssid];
 
-    /* Handshake (4 of 4):
-     * mic:true
-     * ack:false
-     * install:false
-     * replay_couner: <same as Handshake (3 of 4)>
-     * (And/Or) key_data_length == 0 (data === undefined)
-     * 
-     * Extract:
-     * - MIC
-     * - "EAPOL frame"
-     */
+        // Look for last 3 frames of handshake
+        if (CapFile.debug) {
+            console.log("[CapFile.js] Looking for handshake for bssid", bssid, "ssid", ssid);
+        }
+
+        var fc, mic, ack, install, dataLength;
+        var hsSrcAddress, hsDstAddress, snonce, anonce, hsReplayCounter, hsMic;
+        for (i = 0; i < this.packetFrames.length; i++) {
+            frame = this.packetFrames[i];
+
+            // Filter by packet type.
+            fc = frame.frameControl;
+            if (fc.type !== 2 || (fc.subtype !== 0 && fc.subtype !== 8)) {
+                // Not an EAPOL WPA data frame, skip.
+                continue;
+            }
+
+            // Filter for the BSSID we're looking for.
+            if (frame._bssid !== bssid) {
+                if (CapFile.debug) {
+                    console.log("[CapFile.js] Skipping frame #" + i + ": BSSID", frame._bssid, "is not from", bssid);
+                }
+                continue;
+            }
+
+            mic = frame.auth.keyInfoFlags.mic;
+            ack = frame.auth.keyInfoFlags.ack;
+            install = frame.auth.keyInfoFlags.install;
+            dataLength = frame.auth.keyDataLength;
+
+            /* Handshake (2 of 4):
+             * mic:true
+             * ack:false
+             * install:false
+             * keyDataLength > 0)
+             * 
+             * Extract:
+             * - keynonce (SNonce , the nonce from STATION)
+             */
+            if (mic && !ack && !install && dataLength > 0) {
+                // Reset variables from Handshakes #3 and #4
+                hsSrcAddress = hsDstAddress = anonce = hsReplayCounter = hsMic = undefined;
+                // Extract SNonce
+                snonce = frame.auth.keyNonce;
+                if (CapFile.debug) {
+                    console.log("[CapFile.js] Handshake (2 of 4): Found SNonce:", snonce);
+                }
+                continue;
+            }
+
+            /* Handshake (3 of 4):
+             * mic:true
+             * ack:true
+             * install:true
+             * 
+             * Extract:
+             * - src_address (STATION)
+             * - dst_address (AP)
+             * - ANonce (from AP)
+             * - replay_counter (for Handshake 4 of 4)
+             */
+            if (mic && ack && install) {
+                if (!snonce) {
+                    // Require Handshake #2
+                    continue;
+                }
+                // Reset variables from Handshake #4
+                hsMic = undefined;
+                // Extract variables
+                hsSrcAddress = frame._station;
+                hsDstAddress = frame._bssid;
+                anonce = frame.auth.keyNonce;
+                hsReplayCounter = frame.auth.replayCounter;
+                if (CapFile.debug) {
+                    console.log("[CapFile.js] Handshake (3 of 4): src", hsSrcAddress, "dst", hsDstAddress, "ANonce", anonce, "counter", hsReplayCounter);
+                }
+                continue;
+            }
+
+            /* Handshake (4 of 4):
+             * mic:true
+             * ack:false
+             * install:false
+             * replay_couner: <same as Handshake (3 of 4)>
+             * (And/Or) key_data_length == 0 (data === undefined)
+             * 
+             * Extract:
+             * - MIC
+             * - "EAPOL frame"
+             */
+            if (mic && !ack && !install && hsReplayCounter && hsReplayCounter === frame.auth.replayCounter && dataLength === 0) {
+                if (!anonce) {
+                    // Require handshake #3.
+                    continue;
+                }
+                hsMic = frame.auth.keyMIC;
+                if (CapFile.debug) {
+                    console.log("[CapFile.js] Handshake (4 of 4): MIC", hsMic);
+                }
+                handshakes.push({
+                    ssid: ssid,
+                    bssid: bssid,
+                    snonce: snonce,
+                    anonce: anonce,
+                    srcAddress: hsSrcAddress,
+                    dstAddress: hsDstAddress,
+                    replayCounter: hsReplayCounter,
+                    mic: hsMic
+                });
+                continue;
+            }
+        }
+
+
+    }
+
+    if (bssids.length === 0) {
+        throw Error("No SSIDs found");
+    }
+
+    if (handshakes.length === 0) {
+        throw Error("No handshakes found");
+    }
+
+    if (CapFile.debug) {
+        console.log("[CapFile.js] Captured", handshakes.length, "4-way handshakes:", handshakes);
+        console.log("[CapFile.js] Using first 4-way handshake captured:", handshakes[0]);
+    }
+    return handshakes[0];
+
 };
 
