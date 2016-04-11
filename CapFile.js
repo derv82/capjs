@@ -458,11 +458,11 @@ CapFile.WlanFrame.Management = function(frame, endOfPacketOffset) {
 
     var fixedParamLength;
     if (frame.frameControl.subtype === 0) {
-        frame.name = "AssociationRequest";
+        frame.name = "Association Request";
         fixedParamLength = 4;
     }
     else if (frame.frameControl.subtype === 1) {
-        frame.name = "AssociationResponse";
+        frame.name = "Association Response";
         fixedParamLength = 6;
     }
     else if (frame.frameControl.subtype === 8) {
@@ -470,7 +470,7 @@ CapFile.WlanFrame.Management = function(frame, endOfPacketOffset) {
         fixedParamLength = 12;
     }
     else if (frame.frameControl.subtype === 5) {
-        frame.name = "ProbeResponse";
+        frame.name = "Probe Response";
         fixedParamLength = 12;
     }
     else if (frame.frameControl.subtype === 11) {
@@ -510,6 +510,7 @@ CapFile.WlanFrame.Management = function(frame, endOfPacketOffset) {
                 length: tagLength,
                 data: tagData
             };
+            frame.description = "SSID: " + tagData;
         }
         else {
             // Don't care about other tags.
@@ -545,11 +546,13 @@ CapFile.WlanFrame.Data = function(frame, endOfPacketOffset) {
         frame.name = "Unknown Data Frame subtype (" + frame.frameControl.subtype + ")";
         return;
     }
+
     if (frame.frameControl.flags.toDS && frame.frameControl.flags.fromDS) {
         // toDS and fromDS are set, expect addr4
         frame.addr4 = this.getHex(0, 6);
         this.byteOffset_ += 6;
     }
+
     if ((frame.frameControl.subtype & 0b1000) === 8) {
         // QoS flag is set. Expect QoS control field.
         frame.qosControl = this.getHex(0, 2);
@@ -559,6 +562,7 @@ CapFile.WlanFrame.Data = function(frame, endOfPacketOffset) {
     else {
         frame.name = "EAPOL";
     }
+
     if (frame.frameControl.flags.order) {
         // Expect (and skip) HT Control field.
         this.byteOffset_ += 4;
@@ -604,6 +608,22 @@ CapFile.WlanFrame.Data = function(frame, endOfPacketOffset) {
     if (frame.auth.keyDataLength > 0) {
         frame.auth.keyData = this.getHex(0, frame.auth.keyDataLength);
         this.byteOffset_ += frame.auth.keyDataLength;
+    }
+
+    // Set handshake number
+    if (frame.frameControl.flags.fromDS) {
+        // Either 1 or 3
+        if (frame.auth.keyInfoFlags.mic) {
+            frame.description = "Handshake (3 of 4)";
+        } else {
+            frame.description = "Handshake (1 of 4)";
+        }
+    } else {
+        if (frame.auth.keyInfoFlags.secure) {
+            frame.description = "Handshake (4 of 4)";
+        } else {
+            frame.description = "Handshake (2 of 4)";
+        }
     }
 
 };

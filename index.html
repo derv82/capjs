@@ -19,8 +19,25 @@
     <p><textarea id="debug" cols="80" rows="20"></textarea>
 
     <p>Load Pcap capture file:
+
     <input type="file" id="fileChooser" />
+
+    <table>
+      <thead>
+        <th></th>
+        <th class="index">#</th>
+        <th>Timestamp</th>
+        <th>Source MAC</th>
+        <th>Dest. MAC</th>
+        <th>Bytes</th>
+        <th>Packet Type</th>
+      </thead>
+      <tbody id="capfileBody">
+      </tbody>
+    </table>
+
     <pre id="result"></pre>
+
     <script type="text/javascript" src="crypto-js.js"></script>
     <script type="text/javascript" src="Crack.js"></script>
     <script type="text/javascript" src="CapFile.js"></script>

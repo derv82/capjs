@@ -17,3 +17,41 @@ textarea {
     overflow: auto;
     width: 100%;
 }
+
+table {
+    border-spacing: 0px;
+    border-collapse: collapse;
+}
+
+table th, table td {
+    text-align: left;
+    padding-right: 10px;
+    margin: 0px;
+}
+table th {
+    text-decoration: underline;
+}
+
+
+table tr.collapsed:hover td,
+table tr.expanded:hover td {
+    cursor: pointer;
+    background-color: #030;
+}
+
+table td {
+    background-color: #010;
+}
+
+td.index, th.index {
+    text-align: right;
+}
+
+pre.payload {
+    padding: 5px;
+    margin-left: 20px;
+    overflow-x: scroll;
+    max-width: 800px;
+    background-color: #030;
+}
+
