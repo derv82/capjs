@@ -1,0 +1,19 @@
+* {
+    font-family: Consolas,  Verdana, monospace;
+    background-color: #000;
+    color: #0c0;
+}
+html, body {
+    margin: 0px;
+    padding: 20px;
+}
+
+input {
+    background-color: #080;
+    color: #fff;
+}
+
+textarea {
+    overflow: auto;
+    width: 100%;
+}

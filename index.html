@@ -3,9 +3,23 @@
   <head>
     <meta charset="utf-8"/>
     <title>CapFile</title>
+    <link href="style.css" rel="stylesheet" type="text/css">
   </head>
-  <body style="background-color: #000; color: #0f0">
-    <input type="file"/>
+
+  <body>
+    <h1>CapFile.js</h1>
+
+    <p>Test cracking WPA 4-way handshake (TKIP):
+    <input type="button" id="test1" value="Run test" />
+
+    <p>Test cracking WPA2 4-way handshake (CCMP):
+    <input type="button" id="test2" value="Run test" />
+
+    <p>Debug output:
+    <p><textarea id="debug" cols="80" rows="20"></textarea>
+
+    <p>Load Pcap capture file:
+    <input type="file" id="fileChooser" />
     <pre id="result"></pre>
     <script type="text/javascript" src="crypto-js.js"></script>
     <script type="text/javascript" src="Crack.js"></script>

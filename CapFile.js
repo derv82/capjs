@@ -43,14 +43,26 @@
  * Parse the given bytes of a Packet Capture (PCAP) file.
  * Loads result into this.globalHeader (always) and list this.packetFrames (for known frame types).
  *
- * @param bytes - (string? bytes?) Raw bytes from a .cap Pcap file.
- * @param debug - (boolean) Flag to dump debug information to the console (default: false)
- *
- * TODO: Support 'debug' as a *callback*, sends debug text. e.g.
- *       var cf = CapFile(bytes, function(txt) { input.value += txt + "\n" });
+ * @param bytes (string? bytes?) Raw bytes from a .cap Pcap file.
+ * @param debug (boolean or function) If 'true': Dumps debug information to console.
+ *                                    If 'false': Does not dump anything to console.
+ *                                    If given a function, calls function with debug text.
  */
 function CapFile(bytes, debug) {
-    CapFile.debug = debug || false;
+    if (debug) {
+        if (typeof debug === "boolean") {
+            // Default debug function
+            CapFile.debug = function(txt) {
+                console.log("[CapFile.js] " + txt);
+            }
+        }
+        else if (typeof debug === "function") {
+            CapFile.debug = debug;
+        }
+        else {
+            throw Error("Unexpected type of 'debug' option: " + (typeof debug));
+        }
+    }
 
     this.bytes_ = bytes;
     this.byteOffset_ = 0;
@@ -112,17 +124,17 @@ CapFile.prototype.parse = function() {
     }
     if (CapFile.debug) {
         var totalFrames = skippedFrames + this.packetFrames.length;
-        console.log("[CapFile.js] Parsed", this.packetFrames.length, "known frames out of", totalFrames, "total frames.");
+        CapFile.debug("Parsed " + this.packetFrames.length + " known frames out of " + totalFrames + " total frames.");
     }
 };
 
 /**
  * Extract integer from bytes_ at current byteOffset_
  *
- * @param startIndex   - Index of first byte (added to byteOffset_)
- * @param endIndex     - Index of last byte (added to byteOffset_)
- * @param useBigEndian - Override configuration, expect big-endian-style byte order (default: CapFile.useBigEndian)
- * @param signed       - If integer should be signed (default: false)
+ * @param startIndex   Index of first byte (added to byteOffset_)
+ * @param endIndex     Index of last byte (added to byteOffset_)
+ * @param useBigEndian Override configuration, expect big-endian-style byte order (default: CapFile.useBigEndian)
+ * @param signed       If integer should be signed (default: false)
  *
  * @return (int) Numeric-representation of data at byte location.
  */
@@ -156,11 +168,11 @@ CapFile.prototype.getInt = function(startIndex, endIndex, useBigEndian, signed) 
 /**
  * Extract hex characters from bytes_ at current byteOffset_
  *
- * @param startIndex - (int) Index of first byte (added to byteOffset_)
- * @param endIndex   - (int) Index of last byte (added to byteOffset_)
- * @param byteSpacer - (string) Separator between bytes (default: empty string)
- * @param colSpacer  - (string) Separator between chunks of 8 bytes (default: empty string)
- * @param rowSpacer  - (string) Separator between chunks of 16 bytes (default: empty string)
+ * @param startIndex (int) Index of first byte (added to byteOffset_)
+ * @param endIndex   (int) Index of last byte (added to byteOffset_)
+ * @param byteSpacer (string) Separator between bytes (default: empty string)
+ * @param colSpacer  (string) Separator between chunks of 8 bytes (default: empty string)
+ * @param rowSpacer  (string) Separator between chunks of 16 bytes (default: empty string)
  *
  * @return (string) Hex-representation of data at byte location.
  */
@@ -194,8 +206,8 @@ CapFile.prototype.getHex = function(startIndex, endIndex, byteSpacer, colSpacer,
 /**
  * Extract raw bytes from bytes_ at current byteOffset_
  *
- * @param startIndex - (int) Index of first byte (added to byteOffset_)
- * @param endIndex   - (int) Index of last byte (added to byteOffset_)
+ * @param startIndex (int) Index of first byte (added to byteOffset_)
+ * @param endIndex   (int) Index of last byte (added to byteOffset_)
  *
  * @return (string? bytes?) Raw bytes of data at byte location.
  */
@@ -222,11 +234,11 @@ CapFile.prototype.getBytes = function(startIndex, endIndex) {
  * More info on https://wiki.wireshark.org/Development/LibpcapFileFormat
  *
  * @return (object) containing:
- *     version        - (string) in format <major>.<minor> e.g. 2.4
- *     gmtOffset      - (signed int) Offset between packet timestamps and GMT timezone
- *     sigFigs        - (int) Accuracy of timestamps
- *     snapshotLength - (int) Length of snapshot for the capture (in bytes)
- *     headerType     - (int) Link-Layer header type, e.g. LINKTYPE_IEEE802.11 = 105 (Wireless LAN)
+ *     version        (string) in format <major>.<minor> e.g. 2.4
+ *     gmtOffset      (signed int) Offset between packet timestamps and GMT timezone
+ *     sigFigs        (int) Accuracy of timestamps
+ *     snapshotLength (int) Length of snapshot for the capture (in bytes)
+ *     headerType     (int) Link-Layer header type, e.g. LINKTYPE_IEEE802.11 = 105 (Wireless LAN)
  */
 CapFile.GlobalHeader = function() {
     // Presume big endian.
@@ -236,11 +248,11 @@ CapFile.GlobalHeader = function() {
     var magic_number = this.getInt(0, 4);
     if (magic_number === CapFile.MAGIC_NUMBER) {
         if (CapFile.debug) {
-            console.log("[CapFile.js, Debug] Using Little-Endian byte-encoding due to magic number: " + magic_number);
+            CapFile.debug("Using Little-Endian byte-encoding due to magic number: " + magic_number);
         }
     } else {
         if (CapFile.debug) {
-            console.log("[CapFile.js, Debug] Using Big-Endian byte-encoding due to magic number: " + magic_number);
+            CapFile.debug("Using Big-Endian byte-encoding due to magic number: " + magic_number);
         }
         CapFile.useBigEndian = true;
         magic_number = this.getInt(0, 4);
@@ -271,7 +283,7 @@ CapFile.GlobalHeader = function() {
     };
 
     if (CapFile.debug) {
-        console.log("[CapFile.js, Debug] GlobalHeader (24 bytes):\n" + this.getHex(0, 24, " ", "  ", "\n"));
+        CapFile.debug("GlobalHeader (24 bytes):\n" + this.getHex(0, 24, " ", "  ", "\n"));
     }
 
     return headers;
@@ -436,8 +448,8 @@ CapFile.WlanFrame.Types = {
  *
  * Increments CapFile.byteOffset_ to end of the Management frame.
  *
- * @param frame - (object) Reference to the currently-parsed frame.
- * @param endOfPacketOffset - (int) The Offset, in relation to byteOffset_, in which this packet ends.
+ * @param frame (object) Reference to the currently-parsed frame.
+ * @param endOfPacketOffset (int) The Offset, in relation to byteOffset_, in which this packet ends.
  */
 CapFile.WlanFrame.Management = function(frame, endOfPacketOffset) {
     // Management frames contain:
@@ -524,8 +536,8 @@ CapFile.WlanFrame.Management = function(frame, endOfPacketOffset) {
  * Increments CapFile.byteOffset_ to end of the Data frame (if known).
  * Otherwise does not change CapFile.byteOffset_
  *
- * @param frame - (object) Reference to the currently-parsed frame.
- * @param endOfPacketOffset - (int) The Offset, in relation to byteOffset_, in which this packet ends.
+ * @param frame (object) Reference to the currently-parsed frame.
+ * @param endOfPacketOffset (int) The Offset, in relation to byteOffset_, in which this packet ends.
  */
 CapFile.WlanFrame.Data = function(frame, endOfPacketOffset) {
     if ((frame.frameControl.subtype & 0b111) !== 0) {
@@ -622,7 +634,7 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
             bssid_to_ssid[frame._bssid] = tag.data;
         }
         else if (CapFile.debug) {
-            console.log("Ignoring discovered SSID <", tag.data, "> because it does not match given SSID <", givenSSID, ">");
+            CapFile.debug("Ignoring discovered SSID <" + tag.data + "> because it does not match given SSID <" + givenSSID + ">");
         }
     }
 
@@ -639,7 +651,7 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
 
         // Look for last 3 frames of handshake
         if (CapFile.debug) {
-            console.log("[CapFile.js] Looking for handshake for bssid", bssid, "ssid", ssid);
+            CapFile.debug("Looking for handshake for bssid: " + bssid + ", ssid: " + ssid);
         }
 
         var fc, mic, ack, install, dataLength;
@@ -657,7 +669,7 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
             // Filter for the BSSID we're looking for.
             if (frame._bssid !== bssid) {
                 if (CapFile.debug) {
-                    console.log("[CapFile.js] Skipping frame #" + i + ": BSSID", frame._bssid, "is not from", bssid);
+                    CapFile.debug("Skipping frame #" + i + ": BSSID: " + frame._bssid + " is not from " + bssid);
                 }
                 continue;
             }
@@ -684,7 +696,7 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
                 // Extract SNonce
                 snonce = frame.auth.keyNonce;
                 if (CapFile.debug) {
-                    console.log("[CapFile.js] Handshake (2 of 4): Found SNonce:", snonce);
+                    CapFile.debug("Handshake (2 of 4): Found SNonce: " + snonce);
                 }
                 continue;
             }
@@ -716,10 +728,10 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
                 hsReplayCounter = frame.auth.replayCounter;
                 hsKeyLength = frame.auth.keyLength;
                 if (CapFile.debug) {
-                    console.log("[CapFile.js] Handshake (3 of 4): src", hsSrcAddress,
-                            "dst", hsDstAddress,
-                            "ANonce", anonce,
-                            "counter", hsReplayCounter);
+                    CapFile.debug("Handshake (3 of 4): src: " + hsSrcAddress +
+                            ", dst: " + hsDstAddress +
+                            ", ANonce: " + anonce +
+                            ", counter: " + hsReplayCounter);
                 }
                 continue;
             }
@@ -751,7 +763,7 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
                     eapolFrameBytes += "0";
                 }
                 if (CapFile.debug) {
-                    console.log("[CapFile.js] Handshake (4 of 4): MIC", hsMic, "eapolFrameBytes", eapolFrameBytes);
+                    CapFile.debug("Handshake (4 of 4): MIC: " + hsMic + ", eapolFrameBytes: " + eapolFrameBytes);
                 }
 
                 handshakes.push({
@@ -781,8 +793,8 @@ CapFile.prototype.extractPmkFields = function(givenSsid) {
 
     // TODO: Return all handshakes? Or just the first one?
     if (CapFile.debug) {
-        console.log("[CapFile.js] Captured", handshakes.length, "4-way handshakes:", handshakes);
-        console.log("[CapFile.js] Using first 4-way handshake captured:", handshakes[0]);
+        CapFile.debug("Captured " + handshakes.length + " 4-way handshakes: " + JSON.stringify(handshakes));
+        CapFile.debug("Using first 4-way handshake captured: " + JSON.stringify(handshakes[0]));
     }
     return handshakes[0];
 

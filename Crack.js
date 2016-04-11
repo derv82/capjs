@@ -51,11 +51,24 @@
 /**
  * Initializes WPA cracker instance.
  * @param handshake (object) Data from 4-way handshake (see CapFile.extractPmkFields)
- * @param debug (boolean, optional) Prints debug information to console. default: false.
+ * @param debug (boolean or function) If 'true': Dumps debug information to console.
+ *                                    If 'false': Does not dump anything to console.
+ *                                    If given a function, calls function with debug text.
  */
 function Crack(handshake, debug) {
     if (debug) {
-        Crack.debug = debug;
+        if (typeof debug === "boolean") {
+            // Default debug function
+            Crack.debug = function(txt) {
+                console.log("[Crack.js] " + txt);
+            }
+        }
+        else if (typeof debug === "function") {
+            Crack.debug = debug;
+        }
+        else {
+            throw Error("Unexpected type of 'debug' option: " + (typeof debug));
+        }
     }
     this.pbkdf2ConfigForPmk = {
         keySize: 64/8,
@@ -124,13 +137,13 @@ Crack.prototype.pmk = function(key, ssid) {
     //return CryptoJS.enc.Hex.parse("01b809f9ab2fb5dc47984f52fb2d112e13d84ccb6b86d4a7193ec5299f851c48");
 
     if (Crack.debug) {
-        console.log("[CapFile.js] Constructing PMK using PDKDF2(psk:" + key + ", ssid:" + this.handshake.ssid + ")...");
+        Crack.debug("Constructing PMK using PDKDF2(psk:" + key + ", ssid:" + this.handshake.ssid + ")...");
     }
 
     var pmk = CryptoJS.PBKDF2(key, ssid || this.handshake.ssid, this.pbkdf2ConfigForPmk);
 
     if (Crack.debug) {
-        console.log("[CapFile.js] PMK:", pmk.toString());
+        Crack.debug("PMK (Pairwise Master Key): " + pmk.toString());
     }
 
     return pmk;
@@ -148,6 +161,10 @@ Crack.prototype.pmk = function(key, ssid) {
  *
  */
 Crack.prototype.kckFromPmk = function(pmk) {
+    if (Crack.debug) {
+        Crack.debug("Constructing KCK using handshake values, Hmac-SHA1, and the PMK...");
+    }
+
     // Pseudo-Random function based on http://crypto.stackexchange.com/a/33192
     var i = 0, ptk = "", thisPrefix;
     while (i < (64 * 8 + 159) / 160) {
@@ -164,7 +181,7 @@ Crack.prototype.kckFromPmk = function(pmk) {
     var kck = ptk.substring(0, 32);
 
     if (Crack.debug) {
-        console.log("[CapFile.js] KCK:", kck);
+        Crack.debug("KCK (Key-Confirmation Key) : " + kck);
     }
 
     return kck;
@@ -183,19 +200,19 @@ Crack.prototype.micFromKck = function(kck) {
     // MIC(KCK, EAPOL) – MIC computed over the body of this EAPOL-Key frame with the Key MIC field first initialized to 0
     var bytes = CryptoJS.enc.Hex.parse(this.handshake.eapolFrameBytes);
     if (Crack.debug) {
-        console.log("[CapFile.js] EAPOL packet frame bytes", bytes.toString());
+        Crack.debug("EAPOL packet frame bytes: " + bytes.toString());
     }
 
     var computedMic;
     if (this.handshake.keyDescriptorVersion === 1) {
         if (Crack.debug) {
-            console.log("[CapFile.js] Using HmacMD5 for computing WPA MIC...");
+            Crack.debug("Using Hmac-MD5 for computing WPA MIC...");
         }
         computedMic = CryptoJS.HmacMD5(bytes, kck).toString();
     }
     else if (this.handshake.keyDescriptorVersion === 2) {
         if (Crack.debug) {
-            console.log("[CapFile.js] Using HmacSHA1 for computing WPA2 MIC");
+            Crack.debug("Using Hmac-SHA1 for computing WPA2 MIC");
         }
         computedMic = CryptoJS.HmacSHA1(bytes, kck).toString();
 
@@ -207,8 +224,8 @@ Crack.prototype.micFromKck = function(kck) {
     }
 
     if (Crack.debug) {
-        console.log("[CapFile.js] Computed Mic", computedMic);
-        console.log("[CapFile.js] Expected Mic", this.handshake.mic);
+        Crack.debug("Computed Mic (based on PMK & KCK): " + computedMic);
+        Crack.debug("Expected Mic (from Handshake packet): " + this.handshake.mic);
     }
 
     return computedMic;
@@ -224,7 +241,7 @@ Crack.prototype.tryPSK = function(psk) {
 /**
  * Asserts cracking method for WPA (TKIP) works.
  */
-Crack.test_WPA1 = function() {
+Crack.test_WPA1 = function(debug) {
     var handshake = {
         ssid: "Netgear 2/158",
         bssid: "001e2ae0bdd0",
@@ -239,7 +256,7 @@ Crack.test_WPA1 = function() {
         // PSK is 10zZz10ZZzZ
     };
 
-    var c = Crack(handshake, true);
+    var c = new Crack(handshake, debug);
 
     // Assert PMK is accurate.
     var pmk = c.pmk("10zZz10ZZzZ");
@@ -257,17 +274,18 @@ Crack.test_WPA1 = function() {
     if (mic !== "45282522bc6707d6a70a0317a3ed48f0") {
         throw Error("Expected MIC does not match. Got " + mic);
     }
+    Crack.debug("Crack.test_WPA1 passed.");
 };
 
 /**
  * Asserts cracking method for WPA2 (CCMP) works.
  */
-Crack.test_WPA2 = function() {
+Crack.test_WPA2 = function(debug) {
     var handshake = {
         ssid: "Tribble",
         bssid: "002275ecf9c9",
-        snonce: "da12c942e9dfcbe67068438f87cd4ce49b2…",
-        anonce: "f5f5cd2ca691efe420224f466d3eb1633ef…",
+        snonce: "da12c942e9dfcbe67068438f87cd4ce49b253e3c7347bacc8f9aa4ab310e6e9f",
+        anonce: "f5f5cd2ca691efe420224f466d3eb1633ef368ac93de64079ef4d9ca8129fa1b",
         srcAddress: "f4ce46629c64",
         dstAddress: "002275ecf9c9",
         replayCounter: 2925,
@@ -278,7 +296,7 @@ Crack.test_WPA2 = function() {
         // PSK is dandelion
     };
 
-    var c = Crack(handshake, true);
+    var c = new Crack(handshake, debug);
 
     // Assert PMK is accurate.
     var pmk = c.pmk("dandelion");
@@ -288,6 +306,7 @@ Crack.test_WPA2 = function() {
 
     // Assert KCK is accurate.
     var kck = c.kckFromPmk(pmk);
+    //if (kck !== "dc9471429e3918be1eff0f742450d0cd") {
     if (kck !== "dc9471429e3918be1eff0f742450d0cd") {
         throw Error("Expected KCK does not match. Got " + kck.toString());
     }
@@ -297,6 +316,6 @@ Crack.test_WPA2 = function() {
         throw Error("Expected MIC does not match. Got " + mic);
     }
 
-    console.log("[CapFile.js] test_WPA2 passed.");
+    Crack.debug("Crack.test_WPA2 passed.");
 };
 
