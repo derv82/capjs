@@ -99,13 +99,20 @@ CapFile.prototype.parse = function() {
     // List of all identified frames in the cap file.
     this.packetFrames = [];
 
-    var frame;
+    var frame, skippedFrames = 0;
     while (this.byteOffset_ < this.bytes_.length) {
         frame = CapFile.WlanFrame.call(this);
         if (frame.name.indexOf("Unknown") === -1) {
             // Only add known packet types to frames list.
             this.packetFrames.push(frame);
         }
+        else {
+            skippedFrames++;
+        }
+    }
+    if (CapFile.debug) {
+        var totalFrames = skippedFrames + this.packetFrames.length;
+        console.log("[CapFile.js] Parsed", this.packetFrames.length, "known frames out of", totalFrames, "total frames.");
     }
 };
 

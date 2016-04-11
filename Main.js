@@ -13,8 +13,13 @@ document.querySelector('input').addEventListener('change', function() {
             srcAddress: "f4ce46629c64",
             dstAddress: "002275ecf9c9",
             replayCounter: 2925,
-            mic: "646debf34b677fbfd78c5724dc9ea442"
+            keyLength: 16,
+            mic: "646debf34b677fbfd78c5724dc9ea442",
+            keyDescriptorVersion: 2, // WPA2
+            eapolFrameBytes: "0103005f02030a00000000000000000b6dda12c942e9dfcbe67068438f87cd4ce49b253e3c7347bacc8f9aa4ab310e6e9f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            // PSK is dandelion
         }
+        */
 
         // Handshake data from http://stackoverflow.com/questions/12018920/wpa-handshake-with-python-hashing-difficulties
         // TODO: Remove, this is purely for testing.
@@ -27,21 +32,18 @@ document.querySelector('input').addEventListener('change', function() {
             dstAddress: "cc08e0620bc8",
             mic: "45282522bc6707d6a70a0317a3ed48f0",
             keyLength: 32,
-            keyDescriptorVersion: 1,
+            keyDescriptorVersion: 1, // WPA
             eapolFrameBytes: "0103005ffe01090020000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
             // PSK is 10zZz10ZZzZ
         }
-        */
 
-        var c = new Crack(handshake);
-
-        var pmk = c.pmk("dandelion");
-        //var pmk = c.pmk("10zZz10ZZzZ");
-        console.log("PMK", pmk.toString());
-
-        var ptk = c.ptk(pmk);
-        console.log("PTK", ptk);
-        c.ptkToMic(ptk);
+        var c = new Crack(handshake, true);
+        var psk = "10zZz10ZZzZ";
+        if (c.tryPSK(psk)) {
+            console.log("SUCCESS, PSK is " + psk);
+        } else {
+            console.log("FAILURE, PSK is *not* " + psk);
+        }
     }
     reader.readAsBinaryString(this.files[0]);
 }, false);

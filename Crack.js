@@ -83,7 +83,7 @@ Crack.stringToHex = function(s) {
 };
 
 /**
- * Compute prefix of one of the inputs to Pseudo-Random Function (PRF).
+ * Compute prefix of one of the inputs to Pseudo-Random Function (PRF, see Crack.kckFromPmk).
  * The "prefix" contains the "Pairwise Key Expansion", addresses, and nonces.
  * @return (string, hex) PRF prefix.
  */
@@ -109,57 +109,12 @@ Crack.prototype.getPrfPrefix = function() {
 };
 
 /**
- * Psudo-Random Function to calculate PTK.
- * @param pmk (CryptoJS-encoded object) The PMK, calculated from Crack.pmk()
- * @return (string, hex) The first 16 bytes of the PTK.
- */
-Crack.prototype.ptk = function(pmk) {
-   var blen;
-   if (this.handshake.keyDescriptorVersion === 1) {
-       blen = 64;
-   } else if (this.handshake.keyDescriptorVersion === 2) {
-       blen = 32;
-   }
-    var i = 0, R = "", thisPrefix;
-    while (i < (blen * 8 + 159) / 160) {
-        console.log("Round", i + 1);
-        thisPrefix = this.prfPrefix + "0" + i;
-
-        thisPrefix = CryptoJS.enc.Hex.parse(thisPrefix);
-        R += CryptoJS.HmacSHA1(thisPrefix, pmk).toString();
-
-        i++;
-    }
-    // Extract first 16 bytes (32 hex characters) to get KCK.
-    return R.substring(0, 32);
-};
-
-Crack.prototype.ptkToMic = function(ptk) {
-    ptk = CryptoJS.enc.Hex.parse(ptk);
-    var bytes = CryptoJS.enc.Hex.parse(this.handshake.eapolFrameBytes);
-    console.log("EAPOL bytes", bytes.toString());
-    var computedMic;
-    if (this.handshake.keyDescriptorVersion === 1) {
-        // Use HmacMD5 for WPA MIC
-        computedMic = CryptoJS.HmacMD5(bytes, ptk).toString();
-    }
-    else if (this.handshake.keyDescriptorVersion === 2) {
-        // Use HmacSHA1 for WPA2 MIC
-        computedMic = CryptoJS.HmacSHA1(bytes, ptk).toString();
-        computedMic = computedMic.substring(0, 32);
-    }
-    else {
-        throw Error("Unknown key descriptor version: " + this.handshake.keyDescriptorVersion + ", expecting '1' or '2'");
-    }
-    console.log("computedMic", computedMic);
-    console.log("expectedMic", this.handshake.mic);
-}
-
-/**
- * Calculates Pairwise Master Key (PMK) for using the given key.
- * @param key (string) The plaintext key/password.
- * @param ssid (string, optional) SSID (name of Access Point). Uses name from handshake file if not given.
- * @return (CryptoJS-encoded object) The PMK.
+ * Calculates Pairwise Master Key (PMK).
+ * Uses PBKDF2 which may take a while...
+ *
+ * @param key (string) The plaintext key/password (PSK).
+ * @param ssid (string, optional) SSID (name of Wireless Access Point). Uses SSID from CapFile if not given.
+ * @return (CryptoJS-encoded object) The PMK (256bits/32Bytes).
  */
 Crack.prototype.pmk = function(key, ssid) {
     // Tribble
@@ -169,9 +124,179 @@ Crack.prototype.pmk = function(key, ssid) {
     //return CryptoJS.enc.Hex.parse("01b809f9ab2fb5dc47984f52fb2d112e13d84ccb6b86d4a7193ec5299f851c48");
 
     if (Crack.debug) {
-        console.log("[CapFile.js] Constructing PMK using PDKDF2(" + key + ", " + this.handshake.ssid + ")...");
+        console.log("[CapFile.js] Constructing PMK using PDKDF2(psk:" + key + ", ssid:" + this.handshake.ssid + ")...");
     }
-    var result = CryptoJS.PBKDF2(key, ssid || this.handshake.ssid, this.pbkdf2ConfigForPmk);
-    return result;
+
+    var pmk = CryptoJS.PBKDF2(key, ssid || this.handshake.ssid, this.pbkdf2ConfigForPmk);
+
+    if (Crack.debug) {
+        console.log("[CapFile.js] PMK:", pmk.toString());
+    }
+
+    return pmk;
+};
+
+
+/**
+ * Psudo-Random Function to calculate KCK (Key-Confirmation Key) from the PTK (Pairwise Transient Key).
+ * Computes part of PTK using the given PMK.
+ *
+ * Uses "prfPrefix" calculated in Crack.getPrfPrefix().
+ *
+ * @param pmk (CryptoJS-encoded object) The PMK, calculated from Crack.pmk()
+ * @return (string, hex) The KCK (first 16 bytes of the PTK).
+ *
+ */
+Crack.prototype.kckFromPmk = function(pmk) {
+    // Pseudo-Random function based on http://crypto.stackexchange.com/a/33192
+    var i = 0, ptk = "", thisPrefix;
+    while (i < (64 * 8 + 159) / 160) {
+        // Append the current iteration counter as a (hex) byte to the prefix.
+        thisPrefix = this.prfPrefix + ("0" + i);
+
+        thisPrefix = CryptoJS.enc.Hex.parse(thisPrefix);
+        ptk += CryptoJS.HmacSHA1(thisPrefix, pmk).toString();
+
+        i++;
+    }
+
+    // Extract first 16 bytes (32 hex characters) of PTK to get KCK.
+    var kck = ptk.substring(0, 32);
+
+    if (Crack.debug) {
+        console.log("[CapFile.js] KCK:", kck);
+    }
+
+    return kck;
+};
+
+/**
+ * Calculate MIC using KCK (given) and EAPOL frame bytes (from a message in the 4-way handshake).
+ *
+ * @param kck (string, hex) The Key-ConfirmationKey (KCK) computed from Crack.kckFromPmk().
+ * @return (string, hex) The expected MIC.
+ */
+Crack.prototype.micFromKck = function(kck) {
+    kck = CryptoJS.enc.Hex.parse(kck);
+
+    // NOTE: We expect the "MIC" portion of the EAPOL frame bytes to be *zeroed* out! From the 802.11 spec:
+    // MIC(KCK, EAPOL) – MIC computed over the body of this EAPOL-Key frame with the Key MIC field first initialized to 0
+    var bytes = CryptoJS.enc.Hex.parse(this.handshake.eapolFrameBytes);
+    if (Crack.debug) {
+        console.log("[CapFile.js] EAPOL packet frame bytes", bytes.toString());
+    }
+
+    var computedMic;
+    if (this.handshake.keyDescriptorVersion === 1) {
+        if (Crack.debug) {
+            console.log("[CapFile.js] Using HmacMD5 for computing WPA MIC...");
+        }
+        computedMic = CryptoJS.HmacMD5(bytes, kck).toString();
+    }
+    else if (this.handshake.keyDescriptorVersion === 2) {
+        if (Crack.debug) {
+            console.log("[CapFile.js] Using HmacSHA1 for computing WPA2 MIC");
+        }
+        computedMic = CryptoJS.HmacSHA1(bytes, kck).toString();
+
+        // Extract 0-128 MSB per the 802.11 spec.
+        computedMic = computedMic.substring(0, 32);
+    }
+    else {
+        throw Error("Unknown key descriptor version: " + this.handshake.keyDescriptorVersion + ", expecting '1' or '2'");
+    }
+
+    if (Crack.debug) {
+        console.log("[CapFile.js] Computed Mic", computedMic);
+        console.log("[CapFile.js] Expected Mic", this.handshake.mic);
+    }
+
+    return computedMic;
+}
+
+Crack.prototype.tryPSK = function(psk) {
+    var pmk = this.pmk(psk);
+    var kck = this.kckFromPmk(pmk);
+    var computedMic = this.micFromKck(kck);
+    return (computedMic === this.handshake.mic);
+};
+
+/**
+ * Asserts cracking method for WPA (TKIP) works.
+ */
+Crack.test_WPA1 = function() {
+    var handshake = {
+        ssid: "Netgear 2/158",
+        bssid: "001e2ae0bdd0",
+        snonce: "60eff10088077f8b03a0e2fc2fc37e1fe1f30f9f7cfbcfb2826f26f3379c4318",
+        anonce: "61c9a3f5cdcdf5fae5fd760836b8008c863aa2317022c7a202434554fb38452b",
+        srcAddress: "001e2ae0bdd0",
+        dstAddress: "cc08e0620bc8",
+        mic: "45282522bc6707d6a70a0317a3ed48f0",
+        keyLength: 32,
+        keyDescriptorVersion: 1, // WPA
+        eapolFrameBytes: "0103005ffe01090020000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        // PSK is 10zZz10ZZzZ
+    };
+
+    var c = Crack(handshake, true);
+
+    // Assert PMK is accurate.
+    var pmk = c.pmk("10zZz10ZZzZ");
+    if (pmk.toString() !== "01b809f9ab2fb5dc47984f52fb2d112e13d84ccb6b86d4a7193ec5299f851c48") {
+        throw Error("Expected PMK does not match. Got " + pmk.toString());
+    }
+
+    // Assert KCK is accurate.
+    var kck = c.kckFromPmk(pmk);
+    if (kck !== "bf49a95f0494f44427162f38696ef8b6") {
+        throw Error("Expected KCK does not match. Got " + kck.toString());
+    }
+
+    var mic = c.micFromKck(kck);
+    if (mic !== "45282522bc6707d6a70a0317a3ed48f0") {
+        throw Error("Expected MIC does not match. Got " + mic);
+    }
+};
+
+/**
+ * Asserts cracking method for WPA2 (CCMP) works.
+ */
+Crack.test_WPA2 = function() {
+    var handshake = {
+        ssid: "Tribble",
+        bssid: "002275ecf9c9",
+        snonce: "da12c942e9dfcbe67068438f87cd4ce49b2…",
+        anonce: "f5f5cd2ca691efe420224f466d3eb1633ef…",
+        srcAddress: "f4ce46629c64",
+        dstAddress: "002275ecf9c9",
+        replayCounter: 2925,
+        keyLength: 16,
+        mic: "646debf34b677fbfd78c5724dc9ea442",
+        keyDescriptorVersion: 2, // WPA2
+        eapolFrameBytes: "0103005f02030a00000000000000000b6dda12c942e9dfcbe67068438f87cd4ce49b253e3c7347bacc8f9aa4ab310e6e9f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        // PSK is dandelion
+    };
+
+    var c = Crack(handshake, true);
+
+    // Assert PMK is accurate.
+    var pmk = c.pmk("dandelion");
+    if (pmk.toString() !== "273c545d3be7e3fd4510fb5509486ba77f32c39716c4d63bf86de6b808387a77") {
+        throw Error("Expected PMK does not match. Got " + pmk.toString());
+    }
+
+    // Assert KCK is accurate.
+    var kck = c.kckFromPmk(pmk);
+    if (kck !== "dc9471429e3918be1eff0f742450d0cd") {
+        throw Error("Expected KCK does not match. Got " + kck.toString());
+    }
+
+    var mic = c.micFromKck(kck);
+    if (mic !== handshake.mic) {
+        throw Error("Expected MIC does not match. Got " + mic);
+    }
+
+    console.log("[CapFile.js] test_WPA2 passed.");
 };
 
