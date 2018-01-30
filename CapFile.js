@@ -114,9 +114,11 @@ CapFile.prototype.parse = function() {
     var frame, skippedFrames = 0;
     while (this.byteOffset_ < this.bytes_.length) {
         frame = CapFile.WlanFrame.call(this);
-        if (frame.name.indexOf("Unknown") === -1) {
-            // Only add known packet types to frames list.
-            this.packetFrames.push(frame);
+        if (frame.name!=null) {
+            if (frame.name.indexOf("Unknown") === -1) {
+                // Only add known packet types to frames list.
+                this.packetFrames.push(frame);
+            }
         }
         else {
             skippedFrames++;
